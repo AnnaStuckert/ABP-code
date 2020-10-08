@@ -1,0 +1,373 @@
+---
+title: "MasterWrapper"
+author: "Anna Stuckert"
+date: "9/3/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Evt indsæt en settings blok med fx farvekoder
+
+#Preparation
+```{r}
+#Read in packages
+pacman::p_load(here, tidyverse, dplyr)
+
+
+#Get data
+source(here("data", "read_raw_data.r"))
+
+
+#Run data preprocessing script
+source(here::here("code", "get_scores_function_finished_nodropna.R"))
+scores = get_scores(data)
+
+
+source(here::here("code", "get_clean_data.R"))
+clean_data = get_clean_data(data)
+
+
+#source(here::here("code", "combine_intero_survey_BE_data.R"))
+#data_survey_BE_intero <- combine_intero_survey_BE_data(scores)
+
+
+
+
+#Manual in-script preprocessing
+
+Intero_data <- read_delim(here::here("Data", 'Behavior.txt'),  delim=",")
+
+#Clean values in subject column for sub_0XXX
+Intero_data$Subject <- gsub("sub_0+", "", Intero_data$Subject) %>% as.integer()
+Intero_data <- Intero_data %>% rename(record_id= Subject)
+
+#OBS intero data in long format, so 2 rows for each subject, one of rintero condition, one for extero
+#just converting extero to NAs and dropping NAs for now (possibly also dropping other NAs)
+
+
+# Intero_data$Modality <- ifelse(Intero_data$Modality == "Intero", "Intero", NA)
+# Intero_data <- Intero_data %>% drop_na()
+
+#Merge survey + interoception data
+data <- merge(scores, Intero_data, by.y = "record_id")
+
+#Load brain explorer data
+BE_treasure=read.csv(here::here("Data", 'Cobelab_TreasureHunt.csv'))
+BE_scavenger=read.csv(here::here("Data", 'Cobelab_Scavenger.csv'))
+
+#renaming ID columns
+BE_treasure <- BE_treasure %>% rename(be_id= user_ID)
+BE_scavenger <- BE_scavenger %>% rename(be_id= user)
+
+#Adding column for mean gambling attitude win/loss
+BE_scavenger <- BE_scavenger %>% mutate(perc_risk_abg= rowMeans(.[, 5:6]))
+BE_scavenger <- BE_scavenger %>% mutate(perc_risk_NoAbg= rowMeans(.[, 7:8]))
+
+#merging with survey+interoception data
+#data <- merge(data, BE_treasure, by.y = "be_id")
+#data <- merge(data, BE_scavenger, by.y = "be_id")
+
+
+```
+
+scatterplot matrix for accuracy, dprime, criterion, threshold and slope
+```{r}
+
+### Correlation heatmap comparing modalities
+
+# Intero_data$Modality <- ifelse(Intero_data$Modality == "Intero", "Intero", NA)
+# Intero_data <- Intero_data %>% drop_na()
+intero_df <- Intero_data
+intero_df$Modality <- ifelse(intero_df$Modality == "Intero", "Intero", NA)
+intero_df <- intero_df %>% drop_na()
+
+extero_df <- Intero_data
+extero_df$Modality <- ifelse(extero_df$Modality == "Extero", "Extero", NA)
+extero_df <- extero_df %>% drop_na()
+
+extero_df <- extero_df %>% 
+    rename(
+      Ex_Accuracy = Accuracy,
+      Ex_threshold = Threshold,
+      Ex_Criterion = Criterion,
+      Ex_Slope = Slope,
+      Ex_dPrime = dPrime
+    )
+
+intero_df <- intero_df %>% 
+    rename(
+      In_Accuracy = Accuracy,
+      In_threshold = Threshold,
+      In_Criterion = Criterion,
+      In_Slope = Slope,
+      In_dPrime = dPrime
+    )
+
+combined_ex_in_df <- cbind(extero_df, intero_df)
+
+
+#data$Modality <- ifelse(data$Modality == "Intero", "Intero", NA)
+#data <- data %>% drop_na()
+
+combined_shortened <- select(combined_ex_in_df, matches("In_|Ex_"))
+
+pairs(combined_shortened, pch = 19)
+
+
+#Correlation plot
+
+  cormat <- round(cor(combined_shortened),2)
+  
+  head(cormat)
+  
+  #fixing matrix
+  cormat<- cormat[,-6:-10]
+  cormat<- cormat[-1:-5,]
+  
+  
+  library(reshape2)
+  melted_cormat <- melt(cormat)
+  head(melted_cormat)
+  
+  plot_out <- ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
+    geom_tile()+
+    ylab("Variables")+ 
+    xlab("Variables")+
+    ggtitle("Correlation matrix for interoception variables")+
+    scale_fill_viridis_c(option = "inferno")+
+    labs(fill= "Pearson correlation coefficient")
+
+plot_out
+
+
+
+
+
+### correlation heatmap within one modality
+
+#int_shortened <- select(data, "Threshold", "Criterion", "Slope", "dPrime", "Accuracy","perc_risk_NoAbg", "perc_optimal_all", "perc_loss_risk_NoAbg","PSS")
+
+pairs(int_shortened, pch = 19)
+
+
+#Correlation plot
+
+  cormat <- round(cor(int_shortened),2)
+  
+  head(cormat)
+  
+  #fixing matrix
+  # cormat<- cormat[,-13:-16]
+  # cormat<- cormat[-1:-12,]
+  
+  
+  library(reshape2)
+  melted_cormat <- melt(cormat)
+  head(melted_cormat)
+  
+  plot_out <- ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
+    geom_tile()+
+    ylab("Exteroception variable")+ 
+    xlab("Interoception variables")+
+    ggtitle("Correlation matrix for interoception variables")+
+    scale_fill_viridis_c(option = "inferno")+
+    labs(fill= "Pearson correlation coefficient")
+
+plot_out
+
+
+```
+
+# Interoception data exploration
+
+Correlation plot (non-corrected for multiple comparisons)
+
+```{r}
+str(Intero_data)
+int_data <- as.matrix(Intero_data)
+
+int_data <- select(Intero_data, -matches("X1|record_id|Modality"))
+
+  cormat <- round(cor(int_data),2)
+  head(cormat)
+  
+  #fixing matrix
+  # cormat<- cormat[,-13:-16]
+  # cormat<- cormat[-1:-12,]
+  
+  
+  library(reshape2)
+  melted_cormat <- melt(cormat)
+  head(melted_cormat)
+  
+  plot_out <- ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
+    geom_tile()+
+    ylab("Variables")+ 
+    xlab("Variables")+
+    ggtitle("Correlation matrix for interoception variables")+
+    scale_fill_viridis_c(option = "inferno")+
+    labs(fill= "Pearson correlation coefficient")
+
+plot_out
+```
+
+Correlelogram corrected for multiple comparisons
+
+```{r}
+# for reproducibility
+set.seed(123)
+
+install.packages("ggstatsplot")
+library(ggstatsplot)
+
+# as a default this function outputs a correlation matrix plot
+ggstatsplot::ggcorrmat(
+  data = int_data,
+  type = "robust", # correlation method
+  p.adjust.method = "holm", # p-value adjustment method for multiple comparisons
+  cor.vars = c("Accuracy", "Confidence", "ConfidenceRT", "Criterion", "EstimationRT", "HBC", "Slope", "TaskDuration", "Threshold","dPrime"), # a range of variables can be selected
+  cor.vars.names = c("Accuracy", "Confidence", "ConfidenceRT", "Criterion", "EstimationRT", "HBC", "Slope", "TaskDuration", "Threshold","dPrime"),
+  matrix.type = "upper", # type of visualization matrix
+  colors = c("#B2182B", "white", "#4D4D4D"),
+  title = "Correlalogram for Interoception data",
+  caption = "Source: `ggplot2` R package"
+)
+
+
+#GROUPED
+
+# for reproducibility
+set.seed(123)
+
+
+int_data <- select(Intero_data, -matches("X1|record_id"))
+
+# plot
+ggstatsplot::grouped_ggcorrmat(
+  data = int_data,
+  cor.vars = c("Accuracy", "Confidence", "ConfidenceRT", "Criterion", "EstimationRT", "HBC", "Slope", "TaskDuration", "Threshold","dPrime"), # a range of variables can be selected
+  colors = c("#cbac43", "white", "#550000"),
+  grouping.var = Modality, # grouping variable
+  k = 2L, # number of digits after decimal point
+  title.prefix = "Interoception",
+  p.adjust.method= "bonferroni",
+  insig = "blank"
+)
+
+#If adjusted p-values are displayed in the visualization of correlation matrix, the adjusted p-values will be used for the upper triangle, while unadjusted p-values will be used for the lower triangle of the matrix.
+
+# For intero vs extero variables
+# plot
+ggstatsplot::grouped_ggcorrmat(
+  data = int_data,
+  cor.vars = c("Accuracy", "Confidence", "ConfidenceRT", "Criterion", "EstimationRT", "HBC", "Slope", "TaskDuration", "Threshold","dPrime"), # a range of variables can be selected
+  colors = c("#cbac43", "white", "#550000"),
+  grouping.var = Modality, # grouping variable
+  k = 2L, # number of digits after decimal point
+  title.prefix = "Interoception",
+  p.adjust.method= "bonferroni",
+  insig = "blank"
+)
+
+```
+
+Simple modelling of interoception
+```{r}
+
+m1<- lm(Confidence~ Accuracy + Slope + Threshold, data= int_data)
+summary(m1)
+```
+
+
+
+#N DRAWS
+```{r}
+## ADHD plots with n_draw
+#ADHD combined a and b
+ggplot(data, aes(asras_ab_combined, n_draws))+
+  geom_point()+
+  geom_smooth(method="lm")
+
+#ADHD a
+ggplot(data, aes(asra_a, n_draws))+
+  geom_point()+
+  geom_smooth(method="lm")
+
+#ADHD b
+ggplot(data, aes(asrs_b, n_draws))+
+  geom_point()+
+  geom_smooth(method="lm")
+```
+
+```{r}
+# OCD plots
+
+ggplot(data, aes(oci_r, n_draws))+
+  geom_point()+
+  geom_smooth(method="lm")
+```
+
+```{r}
+cor.test(data$asras_ab_combined, data$n_draws, method=c("spearman"))
+cor(data$asras_ab_combined, data$n_draws, method=c("spearman"))
+
+cor.test(data$asra_a, data$n_draws, method=c("spearman"))
+cor.test(data$asrs_b, data$n_draws, method=c("spearman"))
+
+cor.test(data$oci_r, data$n_draws, method=c("spearman"))
+cor(data$oci_r, data$n_draws, method=c("spearman"))
+```
+
+#GAMBLING
+
+```{r}
+# win abg vs NoAbg
+
+ggplot(BE_scavenger, aes(perc_win_risk_abg, perc_win_risk_NoAbg))+
+  geom_point()+
+  geom_smooth(method="lm")
+
+# Loss abg vs NoAbg
+ggplot(BE_scavenger, aes(perc_loss_risk_abg, perc_loss_risk_NoAbg))+
+  geom_point()+
+  geom_smooth(method="lm")
+
+#mean gambling score abg vs NoAbg
+# Loss abg vs NoAbg
+ggplot(BE_scavenger, aes(perc_risk_abg, perc_risk_NoAbg))+
+  geom_point()+
+  geom_smooth(method="lm")
+```
+
+#correlation tests
+```{r}
+cor.test(BE_scavenger$perc_win_risk_abg, BE_scavenger$perc_win_risk_NoAbg, method=c("spearman"))
+cor.test(BE_scavenger$perc_loss_risk_abg, BE_scavenger$perc_loss_risk_NoAbg, method=c("spearman"))
+
+#combined 
+cor.test(BE_scavenger$perc_loss_risk_abg, BE_scavenger$perc_risk_NoAbg, method=c("spearman"))
+```
+
+#Modelling
+```{r}
+lm(perc_risk_NoAbg~perc_loss_risk_abg, BE_scavenger)
+
+```
+
+
+#PLOTTING 
+"interoception and risk aversion
+```{r}
+#mean gambling score abg vs NoAbg
+# Loss abg vs NoAbg
+ggplot(data, aes(dPrime, perc_loss_risk_NoAbg))+
+  geom_point()+
+  geom_smooth(method="lm")
+
+#combined 
+cor.test(data$Threshold, data$perc_optimal_all, method=c("spearman"))
+```
+
