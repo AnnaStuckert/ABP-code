@@ -1,0 +1,175 @@
+---
+title: "Correlation + linear regression"
+author: "Anna Stuckert"
+date: "11/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+BE_cut <- select(data, be_id, perc_loss_risk_abg, perc_loss_risk_NoAbg, perc_win_risk_abg, perc_win_risk_NoAbg)
+library(reshape2)
+melted <- melt(BE_cut)
+
+#Add columns for loss/win and ambuigity
+melted$Framing <- ifelse(grepl("loss", melted$variable), "Loss", "Win")
+melted$Ambiguity <- ifelse(grepl("abg", melted$variable), "Ambiguous", "Non-ambiguous")
+df_slope_interaction <- select(data, Slope, Threshold, absolute_threshold, Interaction_framing_ambiguity, be_id)
+melted <- merge(melted, df_slope_interaction, by.y = "be_id")
+
+str(melted)
+
+melted$be_id <- as.factor(melted$be_id)
+melted$Framing <- as.factor(melted$Framing)
+melted$Ambiguity <- as.factor(melted$Ambiguity)
+
+
+#use psych package to call for descriptives of your dataset and place into an object.
+
+melted_descriptives_Table<-describe(melted)
+
+melted_descriptives_Table #call the object to see the means table
+
+#use knitr function to call the object to see the means table.
+knitr::kable(melted_descriptives_Table, digits = 2, caption = 'Within Means Table') #Here we've also specified that we want to round to "2 digits", and we want our table to have a title of "Within Means Table". These are not necessary, but can be included.
+```
+
+ASSUMPTION CHECKS
+
+```{r}
+
+#Level of measurement refers to each variable. For a Pearson correlation, each variable should be continuous.  If one or both of the variables are ordinal in measurement, then a Spearman correlation could be conducted instead.
+class(melted$value)
+class(melted$Slope)
+class(melted$Interaction_framing_ambiguity)
+
+#Related pairs refers to the pairs of variables. Each participant or observation should have a pair of values. So if the correlation was between weight and height, then each observation used should have both a weight and a height value.
+
+#This one should be fine. Otherwise we will use na.rm 
+
+
+
+#Absence of outliers refers to not having outliers in either variable. Having an outlier can skew the results of the correlation by pulling the line of best fit formed by the correlation too far in one direction or another.  Typically, an outlier is defined as a value that is 3.29 standard deviations from the mean, or a standardized value of less than ±3.29.
+melted %>% identify_outliers(Interaction_framing_ambiguity) #4 outliers
+melted %>% identify_outliers(Slope) #0 outliers
+
+#But if we do not have theoretical reason to remove outliers, strongly consider not removing them
+
+
+#Linearity refers to the shape of the values formed by the scatterplot. For linearity, a “straight line” relationship between the variable should be formed.  If a line were to be drawn between all the dots going from left to right, the line should be straight and not curved.
+
+ggscatter(
+  melted, x = "absolute_threshold", y = "Interaction_framing_ambiguity",
+  short.panel.labs = FALSE
+  )+
+  stat_smooth(method = "loess", span = 0.9)
+
+#It's a little curvy, but not much - this assumption is checked very subjectively.
+
+
+#NORMAL DISTRIBUTION
+#Your variables should be approximately normally distributed. In order to assess the statistical significance of the Pearson correlation, you need to have bivariate normality, but this assumption is difficult to assess, so a simpler method is more commonly used. This simpler method involves determining the normality of each variable separately. To test for normality you can use the Shapiro-Wilk test of normality
+library(ggpubr)
+ggqqplot(melted, "Interaction_framing_ambiguity", ggtheme = theme_bw())
+ggqqplot(melted, "Slope", ggtheme = theme_bw())
+ggqqplot(melted, "absolute_threshold", ggtheme = theme_bw())
+
+#Shapiro tests are unreliable for large samples - we should rely on qq plots
+shapiro_test(melted$Interaction_framing_ambiguity)
+shapiro_test(melted$Slope)
+
+
+#CONCLUSION
+#The variables, mostly Slope and absolute_threshold, break the assumption of approx. normal distribution. Moreover, Slope does not show perfect linearity, and absolute threshold certainly does not show linearity. Thus we should use non-parametric correlation tests.
+
+```
+
+CORRELATION
+
+```{r}
+
+#CORRELATION WITH SLOPE
+
+#Wtih pearson
+cor.test(melted$Slope, melted$Interaction_framing_ambiguity, method=c("pearson"))
+
+#with spearman
+cor.test(melted$Slope, melted$Interaction_framing_ambiguity, method=c("spearman"))
+
+#with kendall
+cor.test(melted$Slope, melted$Interaction_framing_ambiguity, method=c("kendall"))
+
+#CORRELATION WITH THRESHOLD
+
+#with spearman
+cor.test(melted$Threshold, melted$Interaction_framing_ambiguity, method=c("spearman"))
+
+#with spearman
+cor.test(melted$absolute_threshold, melted$Interaction_framing_ambiguity, method=c("spearman"))
+
+```
+
+LINEAR REGRESSION
+
+ASSUMPTIONS
+```{r}
+par(mfrow=c(2,2))  # set 2 rows and 2 column plot layout
+mod_1 <- lm(Interaction_framing_ambiguity ~ Slope, data=melted)  # linear model
+plot(mod_1)
+
+#Linearity: The relationship between X and the mean of Y is linear.
+ggscatter(
+  melted, x = "absolute_threshold", y = "Interaction_framing_ambiguity",
+  short.panel.labs = FALSE
+  )+
+  stat_smooth(method = "loess", span = 0.9)
+
+plot(mod_1, 1)
+#Residuals vs Fitted. Used to check the linear relationship assumptions. A horizontal line, without distinct patterns is an indication for a linear relationship, what is good.
+
+#Homoscedasticity: The variance of residual is the same for any value of X.
+plot(mod_1, 3)
+#Scale-Location (or Spread-Location). Used to check the homogeneity of variance of the residuals (homoscedasticity). Horizontal line with equally spread points is a good indication of homoscedasticity. This is not the case in our example, where we have a heteroscedasticity problem.
+
+#Normality of residuals
+plot(mod_1, 2)
+#Normal Q-Q. Used to examine whether the residuals are normally distributed. It’s good if residuals points follow the straight dashed line.
+
+
+#Residuals vs Leverage. Used to identify influential cases, that is extreme values that might influence the regression results when included or excluded from the analysis. This plot will be described further in the next sections.
+plot(mod_1, 5)
+#425 is a prominent outlier
+
+#Independence: Observations are independent of each other.
+#Normality: For any fixed value of X, Y is normally distributed.
+```
+
+
+
+```{r}
+
+#Runnign the model with wide-format data, like in JASP
+m <- lm(data=data, Interaction_framing_ambiguity ~ Slope+Threshold)
+summary(m)
+
+m <- lm(data=data, Interaction_framing_ambiguity ~ Slope+absolute_threshold)
+summary(m)
+
+#running the model in long format (BUT WE SHOULD DO REPEATED MEASURES)
+m <- lm(data=melted, Interaction_framing_ambiguity ~ SlopeThreshold)
+summary(m)
+
+m <- lm(data=melted, Interaction_framing_ambiguity ~ Slope*absolute_threshold)
+summary(m)
+
+library(lme4)
+m <- lmer(data=melted, Interaction_framing_ambiguity ~ Slope + (1|be_id))
+summary(m)
+
+m1<- lm(Interaction_framing_ambiguity ~ absolute_threshold, melted)
+?lm
+```
+

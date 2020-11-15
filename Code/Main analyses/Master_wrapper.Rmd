@@ -1,0 +1,402 @@
+---
+title: "MasterWrapper"
+author: "Anna Stuckert"
+date: "9/3/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Evt indsæt en settings blok med fx farvekoder
+
+#Preparation
+```{r}
+#Read in packages
+pacman::p_load(here, tidyverse, dplyr, corrplot, reshape2, ggthemes, ggsci)
+
+#Get survey-data with demographics and IDs
+source(here("data", "read_raw_data.r"))
+
+# Removing 44 and 46, becuase they have pseudo ID's and 1108 as this is Nanna testing if redcap surveys work
+data <- filter(data, record_id != 44 & record_id != 46 &  record_id != 1108 &  record_id != 222)
+
+
+#Inserting new, true Observations under their correct ID numbers
+#  5934 = 44
+data$record_id <- ifelse(data$record_id == 5934, 44, data$record_id)
+
+#  5992 = 46
+data$record_id <- ifelse(data$record_id == 5992, 46, data$record_id)
+
+# 6335 = 222
+data$record_id <- ifelse(data$record_id == 6335, 222, data$record_id)
+
+#Get interoception task data
+Intero_data <- read_delim(here::here("Data", 'Behavior.txt'),  delim=",")
+
+#Clean values in subject column for sub_0XXX
+Intero_data$Subject <- gsub("sub_0+", "", Intero_data$Subject) %>% as.integer()
+Intero_data <- Intero_data %>% rename(record_id= Subject)
+
+#create column for absolute value of Threshold (as a value of 0 indicates precise interoception, while anything above and below indicates bias)
+Intero_data <- Intero_data %>% mutate(absolute_threshold = abs(Threshold))
+
+#drop data that is not from del 1
+Intero_data$Session <- ifelse(Intero_data$Session == "Del1", "Del1", NA)
+Intero_data<- Intero_data[!is.na(Intero_data$Session),]
+
+#Merge survey + interoception data
+data <- merge(data, Intero_data, by.y = "record_id")
+
+#Load brain explorer Scavenger task data
+BE_scavenger=read.csv(here::here("Data", 'Cobelab_Scavenger.csv'))
+
+#renaming ID columns
+BE_scavenger <- BE_scavenger %>% rename(be_id= user)
+
+#Adding column for mean gambling attitude ambigious/non-ambigous
+BE_scavenger <- BE_scavenger %>% mutate(perc_risk_abg= rowMeans(.[, 5:6]))
+BE_scavenger <- BE_scavenger %>% mutate(perc_risk_NoAbg= rowMeans(.[, 7:8]))
+
+#I considered that maybe a proxy for loss aversion could be to subtract perc_loss_risk from perc_win_risk (perc_loss_risk - perc_win_risk) so people people with positive values would reflect that people were more likely to choose risk when faces with a loss than for a win (which could maybe be interpreted that they would by all means try to avoid a loss at all)
+BE_scavenger <- BE_scavenger %>% mutate(proxy_loss_aversion = perc_loss_risk - perc_win_risk)
+
+# Create column for interaction effect between variables
+BE_scavenger <- BE_scavenger %>% mutate(Interaction_framing_ambiguity = ((perc_win_risk_abg - perc_loss_risk_abg) - (perc_win_risk_NoAbg - perc_loss_risk_NoAbg)))
+
+
+#merging with survey+interoception data
+data <- merge(data, BE_scavenger, by.y = "be_id")
+
+#removing datapoints from faulty participants
+#data <- filter(data, record_id != 54 & record_id != 84 &  record_id != 192)
+
+#drop extero modality
+int_ex_data <- data
+data$Modality <- ifelse(data$Modality == "Intero", "Intero", NA)
+data<- data[!is.na(data$Modality),]
+
+write_csv(data, "all_data.csv")
+
+
+```
+
+# Total number of participants
+  # 225 have "completed" the questionnaire
+  # 216 people have completed the HRD 
+  # 197/196 have completed the scavenger task
+  # 189 people have completed both the HRD and the scavenger 
+
+# Total number excluded 
+  # 0033  Don't have HRD data 
+  # 0036  Don't have questionaire data as they were excluded from the experiment (+ invalid responses -> remove)
+  # 0041  Don't have questionaire data as they were excluded from the experiment
+  # 0043  We don't have brain explorer id from them 
+  # 0110  Don't have questionaire data+ we don't have brain ID data from them
+  # 0192  Are still in the data set, have both HRD and questionaire - marked with grey in
+  log sheet, neurologial disorder
+  # Subject 44, 45, 46: data missing
+  # Subject 54: noisy PPG -> remove
+  # Subject 141: no data (crash?)
+  
+  
+  Subjects unanswered:
+  191
+  210
+  223
+  248
+  249
+  
+  HBC - question: should we remove these data, if we don't use HBC in our analyses?
+  # Subject 21, 31, 44, 45, 49, 50, 62: missing data?
+  # Subject 25, 41: incomplete (crash?)
+  
+  to do:
+DELETE 192!!!
+Subject 54: noisy PPG -> remove
+Subject 84: bad confidence ratings -> remove
+
+  #from nicolas
+  HRD - questions:
+Subject 46: you said data was missing, but the HRD data is there - 44 and 45 is missing. 
+Subject 27: rename file (28->27) - But in the intero data we both have, there are BOTH a subject 27 and 28. It doesn't seem to rename , wouldnøt we override some data that way?
+Subject 74: missing data - No it's there???
+Subject 81: incorrect file name (081) - but the data is there?? we have just removed the first 0 in 081.
+
+HRD to do (aka to remove)
+Subject 54: noisy PPG -> remove
+Subject 84: bad confidence ratings -> remove
+
+HBC - question: should we remove these data, if we don't use HBC in our analyses?
+Subject 21, 31, 44, 45, 49, 50, 62: missing data?
+Subject 25, 41: incomplete (crash?)
+
+DEMOGRAPHICS
+```{r}
+# Mean task duration of HRD
+mean(data$TaskDuration) # mean task duration is 31.5 min. 
+sd(data$TaskDuration) #sd = 3.9 min
+
+# mean age 
+mean(data$age) # mean age is 24.89
+sd(data$age) # sd of 5.04
+
+# Gender distribtuion
+# Number of men, women, other
+gender <- data %>%
+  group_by(gender)%>%
+  summarise(count = n())
+            # 1 = Woman = 111
+            # 2 = men = 74
+            # 3 = other = 1 
+
+```
+
+SANITY CHECK PLOTS HRD
+
+```{r}
+
+### PLOTS FOR USE ###
+
+#Currently using data only from participants included for all analyses (i.e. having completed both Scavenger task and HRD - the sanity checks for HRD should possibly be run with all participants having complete HRD, but then the int_ex_data data can be switched with Intero_dat)
+
+
+#OBS if we want to use red/blue combination (to make it work with Nicolas' plots) - use Set1 from the brewer color schemes, and use "dark red" and "dark blue" for density distributions.
+
+# Plot of slope 
+SL <- ggplot(data= int_ex_data, aes(x= Modality, y= Slope, color = Modality, fill = Modality )) +
+  geom_bar(stat="summary", fun.y = mean)+
+  theme_stata(scheme = "s1color")+
+  scale_color_brewer(palette = "Paired")+
+  scale_fill_brewer(palette = "Paired")+
+  geom_errorbar(stat="summary", fun.data=mean_se, color = "black", width = 0.7)
+
+SL
+
+
+# mean slope per modality 
+Slope_pr_modality <- int_ex_data %>%
+  group_by(Modality)%>%
+  summarise(mean(Slope))  
+   # Extero =  13.23782
+    # Intero = 15.53700
+
+
+
+slope_violin <- ggplot(int_ex_data, aes(x= Modality, y= Slope, color = Modality)) + 
+  scale_color_brewer(palette = "Paired")+
+  scale_fill_brewer(palette = "Paired")+
+  theme_stata(scheme = "s1color")+ 
+  geom_violin()+ 
+  geom_boxplot(width=0.1)
+
+slope_violin
+
+# large slope = uncertain decision 
+# This plot shows that participants are less certain/precise about the stimuli being faster or slower than their own heart beat for the intero condition than for the extero condition
+
+# Plot of threshold 
+thres_violin <- ggplot(int_ex_data, aes(x= Modality, y= Threshold, color = Modality)) + 
+  geom_violin()+ 
+  geom_boxplot(width=0.1)+
+  theme_stata(scheme = "s1color")+ 
+  scale_color_brewer(palette = "Paired")
+
+thres_violin
+# Participants are biased in the intero condition. Generally think their heart rate is slower than it actually is. They need more information to become better. 
+  
+
+# mean threshold per modality 
+Thres_pr_modality<- int_ex_data %>%
+  group_by(Modality)%>%
+  summarise(mean(Threshold))  
+    # extero = 1.035241	
+    # Intero = -7.684271	
+
+
+# Participants are more accurate for extero conditions compared to intero conditions 
+
+
+# Confidence is invertly related to slope.
+# Nu større slope er nu mindre præcise er deltagerne i at høre/mærke forksllen på om det er hurtigere eller langsommere end deres hjerne. # Nu mere upræcise de er nu mere usikre er de. 
+
+acc_RT <- ggplot(data= int_ex_data, aes(x= DecisionRT, y= Accuracy, color = Modality)) +
+  geom_point()+
+  geom_smooth(method = lm)+
+  theme_stata(scheme = "s1color")+
+  scale_color_brewer(palette = "Paired")+
+  xlab("Mean reaction time per participant")+
+  ylab("Mean accuracy per participant")
+
+acc_RT
+
+# COMBINED DENSITY PLOTS
+
+dens_acc <- ggplot(data = int_ex_data, aes (Accuracy, color = Modality))+
+  geom_density( alpha = 0.5)+
+  theme_stata(scheme = "s1color")+
+  scale_color_brewer(palette = "Paired")+
+  xlab("Accuracy")
+
+dens_acc
+
+dens_thres <- ggplot(data = int_ex_data, aes (Threshold, color = Modality))+
+  geom_density(alpha = 0.5)+
+  theme_stata(scheme = "s1color")+
+  scale_color_brewer(palette = "Paired")+
+  xlab("Threshold")
+
+dens_thres
+
+dens_slope <- ggplot(data = int_ex_data, aes (Slope, color = Modality))+
+  geom_density(alpha = 0.5)+
+  theme_stata(scheme = "s1color")+
+  scale_color_brewer(palette = "Paired")+
+  xlab("Slope")
+
+dens_slope
+
+library(cowplot)
+plot_row<- plot_grid(dens_acc, dens_thres, dens_slope)
+plot_row
+
+#HBC plot, showing that thres correlates with HBC = shows more or less that both tasks work.
+# HBC <- ggplot(data= int_ex_data, aes(x= Threshold, y = HBC, color = Modality)) +
+#   geom_point()+
+#   geom_smooth(method = lm)+
+#   theme_stata(scheme = "s1color")+
+#   scale_colour_stata("s2color")
+# 
+# HBC
+
+# Checking for celing effects in distributions of interoception variables for each modality
+
+# Creating new data frame
+intero_df <- int_ex_data
+
+# Only putting intero into this data frame 
+intero_df$Modality <- ifelse(intero_df$Modality == "Intero", "Intero", NA)
+# Removing NA 
+intero_df <- intero_df[!is.na(intero_df$Modality),]
+
+# Creating new datafram 
+extero_df <- int_ex_data
+
+# Only putting extreo into this dataframe 
+extero_df$Modality <- ifelse(extero_df$Modality == "Extero", "Extero", NA)
+# Removing NA 
+extero_df <-  extero_df[!is.na(extero_df$Modality),]
+
+extero_df <- extero_df %>% 
+    rename(
+      Ex_Accuracy = Accuracy,
+      Ex_Threshold = Threshold,
+      Ex_Criterion = Criterion,
+      Ex_Slope = Slope,
+      Ex_dPrime = dPrime
+    )
+
+intero_df <- intero_df %>% 
+    rename(
+      In_Accuracy = Accuracy,
+      In_Threshold = Threshold,
+      In_Criterion = Criterion,
+      In_Slope = Slope,
+      In_dPrime = dPrime
+    )
+
+dens_acc_In <- ggplot(data = intero_df, aes (In_Accuracy))+
+  geom_density(color = "darkblue", fill = "darkblue", alpha = 0.5)+
+  theme_stata(scheme = "s1color")+
+  xlab("Slope for interoception")
+
+dens_acc_In
+
+dens_acc_Ex <- ggplot(data = extero_df, aes (Ex_Accuracy))+
+  geom_density(color = "lightblue", fill = "lightblue", alpha = 0.5)+
+  theme_stata(scheme = "s1color")+
+  xlab("Slope for interoception")
+
+dens_acc_Ex
+
+# The density plots revaled no celling effect 
+
+dens_slope_In <- ggplot(data = intero_df, aes (In_Slope))+
+  geom_density(color = "darkblue", fill = "darkblue", alpha = 0.5)+
+  theme_stata(scheme = "s1color")+
+  xlab("Slope for interoception")
+
+dens_slope_In
+
+dens_slope_Ex <- ggplot(data = extero_df, aes (Ex_Slope))+
+  geom_density(color = "lightblue", fill = "lightblue", alpha = 0.5)+
+  theme_stata(scheme = "s1color")+
+  xlab("Slope for interoception")
+
+dens_slope_Ex
+
+#The density plot for interoception revealed a ceiling effect, but it's not too bad.
+
+dens_thres_In <- ggplot(data = intero_df, aes (In_Threshold))+
+  geom_density(color = "darkblue", fill = "darkblue", alpha = 0.5)+
+  theme_stata(scheme = "s1color")+
+  xlab("Slope for interoception")
+
+dens_thres_In
+
+dens_thres_Ex <- ggplot(data = extero_df, aes (Ex_Threshold))+
+  geom_density(color = "lightblue", fill = "lightblue", alpha = 0.5)+
+  theme_stata(scheme = "s1color")+
+  xlab("Slope for interoception")
+
+dens_thres_Ex
+
+# The density plots revaled no celling effect 
+
+# SLOPE AND CONFIDENCE ARE CORRELATED
+#bias in extero conditon dos not predict bias in intero condition. 
+# In extero you don't have an overall bias to think your heart is slower. This is a very nice finding, shows that it is better than other tasks. 
+
+```
+
+
+
+
+
+
+```{r}
+
+
+df1 <- Intero_data
+df2 <- scores
+
+df1 <- select(df1, record_id)
+df2 <- select(df2, record_id)
+
+df1 <- rename(df1, intero_id = record_id)
+df2 <- rename(df2, survey_id = record_id)
+
+df3 <- combine.df(df1, df2)
+
+for (i in df3$survey_id) {
+  df3$match_surv <- ifelse(match(df3$survey_id, df3$intero_id), 0, df3$survey_id)
+  df3$excess_survey_id <- ifelse(is.na(df3$match_surv), df3$survey_id, NA)
+  return(df3)
+}
+sum(!is.na(df3$excess_survey_id))
+
+#where excess_survey_id are the stormDB IDs present in the survey data that are NOT present in the intero data.
+
+for (i in df3$intero_id) {
+  df3$match_intero <- ifelse(match(df3$intero_id, df3$survey_id), 0, df3$intero_id)
+  df3$excess_intero_id <- ifelse(is.na(df3$match_intero), df3$intero_id, NA)
+  return(df3)
+}
+
+sum(!is.na(df3$excess_intero_id))
+
+df_lack <- df3[!is.na(df3$excess_survey_id),]
+
+```

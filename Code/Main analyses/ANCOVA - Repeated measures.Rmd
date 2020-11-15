@@ -1,0 +1,230 @@
+---
+title: "Repeated measures ANCOVA"
+author: "Anna Stuckert"
+date: "11/9/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(rstatix)
+library(broom)
+library(emmeans)
+```
+
+Load and transform the data
+```{r}
+BE_cut <- select(data, be_id, perc_loss_risk_abg, perc_loss_risk_NoAbg, perc_win_risk_abg, perc_win_risk_NoAbg )
+library(reshape2)
+melted <- melt(BE_cut)
+
+#Add columns for loss/win and ambuigity
+melted$Framing <- ifelse(grepl("loss", melted$variable), "Loss", "Win")
+melted$Ambiguity <- ifelse(grepl("abg", melted$variable), "Ambiguous", "Non-ambiguous")
+df_slope_interaction <- select(data, Slope, Threshold, absolute_threshold, Interaction_framing_ambiguity, be_id)
+melted <- merge(melted, df_slope_interaction, by.y = "be_id")
+
+str(melted)
+
+melted$be_id <- as.factor(melted$be_id)
+
+melted$Framing <- as.factor(melted$Framing)
+melted$Ambiguity <- as.factor(melted$Ambiguity)
+
+
+#use psych package to call for descriptives of your dataset and place into an object.
+
+melted_descriptives_Table<-describe(melted)
+
+melted_descriptives_Table #call the object to see the means table
+
+#use knitr function to call the object to see the means table.
+knitr::kable(melted_descriptives_Table, digits = 2, caption = 'Within Means Table') #Here we've also specified that we want to round to "2 digits", and we want our table to have a title of "Within Means Table". These are not necessary, but can be included.
+```
+
+Assumptions
+
+```{r}
+ggscatter(
+  melted, x = "Slope", y = "value",
+  facet.by  = c("Ambiguity", "Framing"), 
+  short.panel.labs = FALSE
+  )+
+  stat_smooth(method = "loess", span = 0.9)
+
+#linearity = der er et linært sammenhæng mellem to variabler, ikke alt muligt wavy shit
+#Linearity refers to the shape of the values formed by the scatterplot. For linearity, a “straight line” relationship between the variable should be formed.  If a line were to be drawn between all the dots going from left to right, the line should be straight and not curved.
+
+
+#Assumption: Homogeneity of regression slopes
+#This assumption checks that there is no significant interaction between the covariate and the grouping variables. This can be evaluated as follow:
+melted %>%
+  anova_test(
+    value ~ Slope + Ambiguity + Framing + 
+     Ambiguity*Framing + Ambiguity*Slope +
+     Framing*Slope + Ambiguity*Framing*Slope
+  )
+
+#More in a  "Fields" style: effects of grouping variables are not significant predictors of our covariate, Slope.
+anova_test(Slope ~ Ambiguity*Framing, data = melted)
+
+#There was homogeneity of regression slopes as the interaction terms, between the covariate (age) and grouping variables (treatment and exercise), was not statistically significant, p > 0.05.
+
+
+
+# Assumption: normality of residuals
+
+# Fit the model, the covariate goes first
+model <- lm(value ~ Slope*Ambiguity*Framing, data = melted)
+# Inspect the model diagnostic metrics
+model.metrics <- augment(model) %>%
+  select(-.hat, -.sigma, -.fitted) # Remove details
+head(model.metrics)
+
+# Assess normality of residuals using shapiro wilk test
+shapiro_test(model.metrics$.resid)
+
+#The Shapiro Wilk test was not significant (p > 0.05), so we can assume normality of residuals
+#EXCEPT IT WAS NOT
+
+#Homogeneity of variances
+
+levene_test(.resid ~ Ambiguity*Framing, data = model.metrics)
+
+#The Levene’s test was not significant (p > 0.05), so we can assume homogeneity of the residual variances for all groups.
+ 
+#ALSO NOT TRUE FOR THIS ONE
+
+# Assumption: Observations whose standardized residuals are greater than 3 in absolute value are possible outliers.
+
+model.metrics %>% 
+  filter(abs(.std.resid) > 3) %>%
+  as.data.frame()
+
+#There were no outliers in the data, as assessed by no cases with standardized residuals greater than 3 in absolute value.
+
+```
+
+Compute the ANCOVA
+```{r}
+#NOT REPATED measures ANCOVA
+res.aov <- melted %>% 
+  anova_test(value ~ Slope*Ambiguity*Framing, type = 2) #type signals the type of sum of squares. (type 3 is good if you have an unbalanced design. Type 2 is good if you're also interested in main effects)
+get_anova_table(res.aov)
+
+#After adjustment for age, there was a statistically significant interaction between treatment and exercise on the stress score, F(2, 53) = 4.45, p = 0.016. This indicates that the effect of exercise on score depends on the level of exercise, and vice-versa.
+
+
+#REPEATED measure ANCOVA
+library(afex)
+aov_melted <- aov_car(value ~ Ambiguity+Framing+Slope+ Error(be_id/Ambiguity+Framing), data=melted, factorize = FALSE, anova_table = list(es = "pes")) #Do not know if I should report PES or GES effect size
+#seemingly doesn't change anythign if we add variables with + or *
+
+aov_melted #call object to see ANOVA table
+summary(aov_melted) #If there are violations Mauchly's sphericity, it brings it up in the summary of the anova model
+
+
+
+#syntax similar to lmer()
+TEST <- aov_4(value ~ Ambiguity+Framing+Slope + (Ambiguity+Framing|be_id), data=melted, factorize = FALSE) #the function automatically chaanges * to + 
+summary(TEST)
+
+#using another function to check I get the same results as above, and I do.
+#ANCOVA
+ez.glm("be_id", "value", melted, within=c("Framing","Ambiguity"), covariate= "Slope",
+       factorize = FALSE)
+
+
+#Trying with some linear models
+
+m <-lmer(value ~ Ambiguity*Framing*Slope + (Ambiguity+Framing|be_id), data=melted) #will not run random effects with *, only with + 
+
+m <-lmer(value ~ Ambiguity*Framing*Slope + (Ambiguity+Framing|be_id), data=melted) #will not run random effects with *, only with + GIDER IKKE CONVERGE
+
+#the lmer from lme4 is the function aov_4 calls upon, they ARE THE SAME MODEL!!!! 
+
+summary(m)
+
+#these two things show that when we post-hoc test, the two models provide the same findings, they just list "main findings" differently (factors in anova, different levels in lmer)
+pairs(emmeans(m, ~ Framing*Ambiguity), adjust = "bon")
+pairs(TEST, adjust = "bon")
+
+```
+
+Post-hoc tests
+
+```{r}
+
+#Simple main effect analyses for treatment
+
+#Analyze the simple main effect of treatment at each level of exercise. Group the data by exercise and perform one-way ANCOVA for treatment controlling for age:
+  
+# Effect of treatment at each level of exercise
+melted %>%
+  group_by(Ambiguity) %>%
+  anova_test(value ~ Slope + Framing) #we should apply bonferroni corrections
+
+#Statistical significance was accepted at the Bonferroni-adjusted alpha level of 0.01667, that is 0.05/3. The effect of treatment was statistically significant in the high-intensity exercise group (p = 0.00045), but not in the low-intensity exercise group (p = 0.517) and in the moderate-intensity exercise group (p = 0.526).
+
+
+
+#Compute pairwise comparisons between treatment groups at each level of exercise. The Bonferroni multiple testing correction is applied.
+
+pwc <- melted %>% 
+  group_by(Ambiguity) %>%
+  emmeans_test(
+    value ~ Framing, covariate = Slope,
+    p.adjust.method = "bonferroni"
+    )
+pwc
+
+#The pairwise comparisons between loss frames and win frames was statistically significant in both ambigous and non-ambiguous trials (p < 0.0001).
+```
+
+Plots
+
+```{r}
+# Line plot
+lp <- ggline(
+  get_emmeans(pwc), x = "Ambiguity", y = "emmean", 
+  color = "Framing", palette = "jco"
+  ) +
+  geom_errorbar(
+    aes(ymin = conf.low, ymax = conf.high, color = Framing), 
+    width = 0.1
+    )
+lp
+
+#Add p-values
+# Comparisons between treatment group at each exercise level
+pwc <- pwc %>% add_xy_position(x = "Ambiguity", fun = "mean_se", step.increase = 0.2)
+pwc.filtered <- pwc
+lp + 
+stat_pvalue_manual(
+  pwc.filtered, hide.ns = TRUE, tip.length = 0,
+  bracket.size = 0
+  ) +
+labs(
+  subtitle = get_test_label(res.aov,  detailed = TRUE),
+  caption = get_pwc_label(pwc)
+)
+
+# Comparisons between exercises group at each treatment level
+pwc2 <- pwc %>% add_xy_position(x = "Ambiguity", fun = "mean_se")
+pwc2.filtered <- pwc2 %>% filter(treatment == "yes")
+lp + 
+stat_pvalue_manual(
+  pwc2.filtered, hide.ns = TRUE, tip.length = 0,
+  step.group.by = "treatment", color = "treatment"
+  ) +
+labs(
+  subtitle = get_test_label(res.aov,  detailed = TRUE),
+  caption = get_pwc_label(pwc2)
+)
+```
+

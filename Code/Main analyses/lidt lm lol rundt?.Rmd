@@ -1,0 +1,20 @@
+---
+title: "Untitled"
+author: "Anna Stuckert"
+date: "11/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(lmerTest)
+m <-lmer(value ~ Ambiguity*Framing +(Ambiguity*Framing|be_id), data=melted)
+summary(m)
+m1 <-lmer(value ~ Ambiguity*Framing*Slope + (1|be_id), data=melted)
+summary(m1)
+anova(m, m1)
+```
+

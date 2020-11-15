@@ -1,0 +1,313 @@
+---
+title: "Repeated measures ANOVA"
+author: "Anna Stuckert"
+date: "11/9/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+install.packages("afex")
+install.packages("emmeans")
+install.packages("ggplot2")
+install.packages("psych")
+
+library(afex)
+library(emmeans)
+library(ggplot2)
+library(psych)
+library(tidyverse)
+```
+
+Load and transform the data
+```{r}
+BE_cut <- select(data, be_id, perc_loss_risk_abg, perc_loss_risk_NoAbg, perc_win_risk_abg, perc_win_risk_NoAbg )
+library(reshape2)
+melted <- melt(BE_cut)
+
+#Add columns for loss/win and ambuigity
+melted$Framing <- ifelse(grepl("loss", melted$variable), "Loss", "Win")
+melted$Ambiguity <- ifelse(grepl("abg", melted$variable), "Ambiguous", "Non-ambiguous")
+df_slope_interaction <- select(data, Slope, Threshold, absolute_threshold, Interaction_framing_ambiguity, be_id)
+melted <- merge(melted, df_slope_interaction, by.y = "be_id")
+
+str(melted)
+
+melted$be_id <- as.factor(melted$be_id)
+
+melted$Framing <- as.factor(melted$Framing)
+melted$Ambiguity <- as.factor(melted$Ambiguity)
+
+
+#use psych package to call for descriptives of your dataset and place into an object.
+
+melted_descriptives_Table<-describe(melted)
+
+melted_descriptives_Table #call the object to see the means table
+
+#use knitr function to call the object to see the means table.
+knitr::kable(melted_descriptives_Table, digits = 2, caption = 'Within Means Table') #Here we've also specified that we want to round to "2 digits", and we want our table to have a title of "Within Means Table". These are not necessary, but can be included.
+```
+
+Checking assumptions
+```{r}
+
+#The sample was randomly selected from the population.
+# Yes
+
+#Assumption #1: Your dependent variable should be measured at the continuous level
+#Percentages distributed between 0 and 1, should be okay.
+
+#Assumption #2: Your two within-subjects factors (i.e., two independent variables) should consist of at least two categorical, "related groups" or "matched pairs". "Related groups" indicates that the same subjects are present in both groups.
+#Should be good too.
+
+#Assumption #3: There should be no significant outliers in any combination of the related groups.
+#identifying outliers
+#normal
+library(rstatix)
+outliers <- melted %>%
+  group_by(Ambiguity,Framing) %>%
+  identify_outliers(value)
+
+# You can include the outlier in the analysis anyway if you do not believe the result will be substantially affected. This can be evaluated by comparing the result of the ANOVA with and without the outlier
+#also, if we do not have theoretical reasons to exclude outliers (e.g. reaction times cannot be faster than 0.2 seconds), then we shouldn't exclude outliers
+
+
+#Assumption #4: The distribution of the dependent variable in each combination of the related groups should be approximately normally distributed. 
+library(ggpubr)
+ggqqplot(melted, "value", ggtheme = theme_bw()) +
+  facet_grid(Ambiguity ~ Framing)
+#From the plot above, as all the points fall approximately along the reference line, we can assume normality.
+#Note that, if your sample size is greater than 50, the normal QQ plot is preferred because at larger sample sizes the Shapiro-Wilk test becomes very sensitive even to a minor deviation from normality.
+
+
+
+#Assumption #5: Known as sphericity, the variances of the differences between all combinations of related groups must be equal.
+#The afex package will check your data for sphericity assumptions and if necessary correct for any violations.
+
+ez<- ezANOVA(data=melted,dv=.(value),wid=.(be_id),within=.(Framing, Ambiguity),type=1)
+print(ez) #changing between type 2 and 3 makes no difference - changing between type 1 and 2/3 does change the GES, but not the remaining numbers
+
+#Assumption of sphericity: the variance of the differences between groups should be equal. This can be checked using the Mauchly’s test of sphericity
+# Sphericity is evaluated only for variables with more than two levels because sphericity necessarily holds for conditions with only two levels.
+#--> in a 2x2 design there is no sphericity, therefore these corrections in our example have no effect
+# Basically, it's because there are only 2 levels of repeated measures. As such, there is only one set of difference scores and nothing to compare those difference scores against to indicate a violation of sphericity. I'm glad it was an easy answer.
+
+#Sphericity = A statistical assumption important for repeated-measures ANOVAs. When it is violated, F values will be positively biased. Researchers adjust for this bias by raising the critical value of F needed to attain statistical significance. Mauchley’s test for sphericity is the most common way to see whether the assumption has been met.
+
+
+
+
+#homogenity of variance
+library(car)
+leveneTest(value ~ Ambiguity*Framing, data =melted)
+
+#andy field s 413 - homeogeneity of variance er ikke skide vigtig, anova er ret robust
+
+#Assumption: No perfect multicollinearity - values are below 2 (2 er konservativ grænse, 4 er liberal grænse)
+mod2 <- lmer(value ~ Ambiguity+Framing + (1|be_id), data=melted) # we use wihitn-subjects variables, so we use that in this model to avoid breaking assumptions in assumption checks
+vif(mod2)
+
+#VIF is a metric computed for every X variable that goes into a linear model. If the VIF of a variable is high, it means the information in that variable is already explained by other X variables present in the given model, which means, more redundant is that variable. So, lower the VIF (<2) the better.
+#Practically, if two of the X′s have high correlation, they will likely have high VIFs. Generally, VIF for an X variable should be less than 4 in order to be accepted as not causing multi-collinearity. The cutoff is kept as low as 2, if you want to be strict about your X variables.
+
+
+#Alt herefter er ikke fra Sofie, ved ikke om man kan gøre det som i artiklen http://r-statistics.co/Assumptions-of-Linear-Regression.html?fbclid=IwAR23B8BiH46dxiwUJCYBqDycH9hblyvCNA-y2QjCaEljPRy3DbNZfSMN5HM 
+
+
+#Assumption: The mean of residuals is zero
+mod2 <- lmer(value ~ Ambiguity+Framing + (1|be_id), data=melted)
+
+#Since the mean of residuals is approximately zero, this assumption holds true for this model.
+
+#Assumption: Homoscedasticity of residuals or equal variance
+par(mfrow=c(2,2))  # set 2 rows and 2 column plot layout
+mod_1 <- lm(value ~ Ambiguity*Framing, data=melted)  # linear model
+plot(mod_1)
+
+#the red line looks pretty flat. So, the condition of homoscedasticity can be accepted.
+
+#Assumption: The X variables and residuals are uncorrelated
+
+mod.lm <- lm(value ~ Ambiguity*Framing, data=melted)
+cor.test(melted$Ambiguity, mod.lm$residuals)  # do correlation test - it won't do it because Ambiguity isn't numeric
+
+# Assumption: The number of observations must be greater than number of Xs
+# Holds true, from looking at the data
+
+#Assumption: The variability in X values is positive
+#This can only be done for 
+var(melted$Ambiguity)
+var(melted$Slope)
+#The variance in the X variable above is much larger than 0. So, this assumption is satisfied.
+
+#The regression model is correctly specified
+#This is a subjective assesment
+
+#Assumption: normality of residuals
+par(mfrow=c(2,2))
+mod <- glm(value ~ Ambiguity*Framing, data=melted) #not sure of glm er lm
+plot(mod)
+
+#The qqnorm() plot in top-right evaluates this assumption. If points lie exactly on the line, it is perfectly normal distribution. However, some deviation is to be expected, particularly near the ends (note the upper right), but the deviations should be small
+
+```
+
+
+Plot
+
+```{r}
+BarGraph<-ggplot(melted, aes(Ambiguity, value, fill=Ambiguity)) +
+  geom_bar(stat="summary", fun.y="mean") +
+  geom_errorbar(stat = "summary") +
+  facet_grid(.~Framing) +
+  xlab("Ambiguity") + ylab("%Risky bets") +
+  scale_fill_brewer(palette="Paired") +
+  theme(legend.position="none")
+
+BarGraph
+
+#As boxplot
+bxp <- ggboxplot(
+  melted, x = "Ambiguity", y = "value",
+  color = "Framing", palette = "jco"
+  )
+bxp
+
+#there is also a possibility of "boxplots with p-values"
+```
+
+```{r}
+library(pastecs)
+#Descriptives - main effects effects
+by(melted$value, melted$Framing, stat.desc)
+by(melted$value, melted$Ambiguity, stat.desc)
+
+
+#Descriptives - interaction effects
+by(melted$value, list(melted$Framing,
+melted$Ambiguity), stat.desc)
+
+
+library(afex)
+library(emmeans)
+aov_melted <- aov_car(value ~ Ambiguity*Framing + Error(be_id/Ambiguity * Framing), data=melted)
+
+TEST2 = emmeans(aov_melted, ~ Framing*Ambiguity)
+pairs(TEST2, adjust = "bon")
+
+TEST <- aov_4(value ~ Ambiguity*Framing + (Ambiguity + Framing|be_id), data=melted)
+
+TEST <- aov_4(value ~ Ambiguity*Framing + (Ambiguity*Framing|be_id), data=melted) #the function automatically chaanges * to + 
+summary(TEST)
+summary(aov_melted)
+
+library(lmerTest)
+library(lme4)
+
+m <-lmer(value ~ Ambiguity*Framing + (Ambiguity+Framing|be_id), data=melted) #will not run random effects with *, only with + 
+
+m <-lmer(value ~ Ambiguity*Framing+Slope + (Ambiguity+Framing|be_id), data=melted) #will not run random effects with *, only with + GIDER IKKE CONVERGE
+
+#the lmer from lme4 is the function aov_4 calls upon, they ARE THE SAME MODEL!!!! 
+
+summary(m)
+
+  #these two things show that when we post-hoc test, the two models provide the same findings, they just list "main findings" differently (factors in anova, different levels in lmer)
+pairs(emmeans(m, ~ Framing*Ambiguity), adjust = "bon")
+pairs(TEST2, adjust = "bon")
+
+#We also considered if it was a "sums of squares" kind of problem, as different functions/models default to different sums of squares. The results remain the same, no matter what kind of sums of squares we end up using (some functions when we directly specified type=2 changed it to 3, r vice versa, as results would be the same)
+
+
+
+aov_melted #call object to see ANOVA table
+summary(aov_melted) #If there are violations Mauchly's sphericity, it brings it up in the summary of the anova model
+
+knitr::kable(nice(aov_melted))
+
+#OBS aov_car defaults to using Type III Sum of Squares
+#2.) The afex package also automatically detects and corrects for violations of sphericity in your data. If a correction is made to your DF, R will report which correction was used below the ANOVA table. NOTE: that in a 2x2 design there is no sphericity, therefore these corrections in our example have no effect
+
+#3.) Additionally, when reporting effect sizes, the afex package defaults to reporting Generalized Eta Squared (GES). This is in contrast to Partial Eta Squared (PES) that is also commonly reported in some fields. 
+
+#The afex package will check your data for sphericity assumptions and if necessary correct for any violations. However, you may want to turn off these corrections in some instances. Include the following anova_table line and specify correction = “none” to prevent these default corrections.
+
+#with partial eta squred instead of GES
+melted_aov_pes<-aov_car(value ~ Ambiguity*Framing+ Error(be_id/Ambiguity*Framing), data=melted, anova_table = list(es = "pes")) #This reports PES not GES
+
+knitr::kable(nice(melted_aov_pes))
+
+
+```
+
+
+Post hoc tests
+```{r}
+
+
+#main effects
+melted_ambiguity<-emmeans(aov_melted, ~ Ambiguity)
+melted_ambiguity
+
+melted_framing<-emmeans(aov_melted, ~ Framing)
+melted_framing
+
+#interacton
+#Most importantly, our ANOVA showed an interaction between study method and time. Let’s use pairwise comparisons to interpret our interaction. Again, we start by getting the marginal means, this time for both conditions by calling emmeans and specifying we want means for our study method condition (Within_cond) by time (Within_Time). emmeans uses the “|” symbol to look at an interaction between two variables.
+melted_Interaction <- emmeans(aov_melted, ~ Ambiguity|Framing)
+melted_Interaction #call the object we created
+
+#Now, to test the significance of the mean differences, we will use the pairs function. For this, we simply call the pairs function and then specify the object that holds our marginal means. In this case (Within_Fitted_Interaction)
+pwc <- pairs(melted_Interaction, adjust = "bon") #with bonferroni correction - not necessary in a 2x2 design
+pwc
+
+
+#Compute pairwise comparisons between treatment groups at each level of exercise. The Bonferroni multiple testing correction is applied.
+
+
+
+#The pairwise comparisons between loss frames and win frames was statistically significant in both ambigous and non-ambiguous trials (p < 0.0001).
+
+
+```
+
+PLOTS
+```{r}
+# Line plot
+lp <- ggline(
+  get_emmeans(pwc), x = "Ambiguity", y = "emmean", 
+  color = "Framing", palette = "jco"
+  ) +
+  geom_errorbar(
+    aes(ymin = conf.low, ymax = conf.high, color = Framing), 
+    width = 0.1
+    )
+lp
+
+#Add p-values
+# Comparisons between treatment group at each exercise level
+pwc <- pwc %>% add_xy_position(x = "Ambiguity", fun = "mean_se", step.increase = 0.2)
+pwc.filtered <- pwc
+lp + 
+stat_pvalue_manual(
+  pwc.filtered, hide.ns = TRUE, tip.length = 0,
+  bracket.size = 0
+  ) +
+labs(
+  subtitle = get_test_label(res.aov,  detailed = TRUE),
+  caption = get_pwc_label(pwc)
+)
+```
+
+
+
